@@ -129,6 +129,66 @@ def rmse_per_target(y_true: np.ndarray, y_pred: np.ndarray, target_names: List[s
     out["all_concat"] = rmse(y_true.reshape(-1), y_pred.reshape(-1))
     return pd.Series(out)
 
+# Indices for consistency constraints
+IDX_GREEN  = TARGETS.index("Dry_Green_g")
+IDX_DEAD   = TARGETS.index("Dry_Dead_g")
+IDX_CLOVER = TARGETS.index("Dry_Clover_g")
+IDX_GDM    = TARGETS.index("GDM_g")
+IDX_TOTAL  = TARGETS.index("Dry_Total_g")
+
+
+def make_mse_rmse_consistency_loss(
+    lambda_total: float = 0.1,
+    lambda_gdm: float = 0.1,
+    base: str = "mse",          # "mse" or "rmse"
+    eps: float = 1e-7,
+):
+    """
+    Assumes y_true and y_pred are log1p(grams).
+    Adds penalties:
+      - Total_pred_log vs log1p(Green+Dead+Clover)
+      - GDM_pred_log   vs log1p(Green+Clover)
+    computed from predicted components (converted back to grams).
+    """
+    base = base.lower()
+    if base not in ("mse", "rmse"):
+        raise ValueError("base must be 'mse' or 'rmse'")
+
+    def loss(y_true, y_pred):
+        y_true = tf.cast(y_true, tf.float32)
+        y_pred = tf.cast(y_pred, tf.float32)
+
+        # ----- Base loss on all 5 outputs (in log1p space)
+        err = y_pred - y_true
+        mse = tf.reduce_mean(tf.square(err))
+        base_loss = tf.sqrt(mse + eps) if base == "rmse" else mse
+
+        # ----- Convert predicted components back to grams (non-negative)
+        # Because y_pred is log1p(grams), expm1 gives grams.
+        g_green  = tf.nn.relu(tf.math.expm1(y_pred[:, IDX_GREEN]))
+        g_dead   = tf.nn.relu(tf.math.expm1(y_pred[:, IDX_DEAD]))
+        g_clover = tf.nn.relu(tf.math.expm1(y_pred[:, IDX_CLOVER]))
+
+        # sums in grams
+        g_sum_total = g_green + g_dead + g_clover
+        g_sum_gdm   = g_green + g_clover
+
+        # predicted totals in log1p space
+        total_pred_log = y_pred[:, IDX_TOTAL]
+        gdm_pred_log   = y_pred[:, IDX_GDM]
+
+        # enforce: log1p(total_pred) == log1p(sum_of_parts_pred)
+        total_target_log = tf.math.log1p(g_sum_total)
+        gdm_target_log   = tf.math.log1p(g_sum_gdm)
+
+        # RMSE penalties (in log1p units)
+        pen_total = tf.sqrt(tf.reduce_mean(tf.square(total_pred_log - total_target_log)) + eps)
+        pen_gdm   = tf.sqrt(tf.reduce_mean(tf.square(gdm_pred_log   - gdm_target_log))   + eps)
+
+        return base_loss + lambda_total * pen_total + lambda_gdm * pen_gdm
+
+    return loss
+
 
 # =========================
 # Data: long -> image-level wide
@@ -316,11 +376,19 @@ def build_cnn(img_size: int, n_targets: int, lr: float) -> keras.Model:
     x = layers.Dense(256, activation="relu")(x)
     x = layers.Dropout(0.3)(x)
     x = layers.Dense(128, activation="relu")(x)
-    out = layers.Dense(n_targets, activation="linear")(x)
+    out = layers.Dense(n_targets, activation="softplus")(x)
 
     model = keras.Model(inputs=img_in, outputs=out)
-    model.compile(optimizer=keras.optimizers.Adam(lr), loss="mae")
-    return model
+    loss_fn = make_mse_rmse_consistency_loss(
+        lambda_total=0.15,
+        lambda_gdm=0.15,
+        base="rmse",  # or "mse"
+    )
+
+    model.compile(
+        optimizer=keras.optimizers.Adam(lr),
+        loss=loss_fn
+    )    return model
 
 
 def make_tf_dataset(image_paths: List[str],
