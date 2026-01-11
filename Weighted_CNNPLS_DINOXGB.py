@@ -1,5 +1,8 @@
 # ensemble_biomass_oof_5targets.py
 
+# =========================
+# Package Setup
+# =========================
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -388,7 +391,8 @@ def build_cnn(img_size: int, n_targets: int, lr: float) -> keras.Model:
     model.compile(
         optimizer=keras.optimizers.Adam(lr),
         loss=loss_fn
-    )    return model
+    )
+    return model
 
 
 def make_tf_dataset(image_paths: List[str],
