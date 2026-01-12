@@ -291,3 +291,229 @@ GDM_g           13.330205
 Dry_Total_g     16.991383
 mean            11.748495
 all_concat      12.279945
+
+
+Train: 357 | Test: 1 | Models: 4
+ - dinov3b vit_base_patch16_dinov3.lvd1689m | crops 3 | batch 16
+ - cnxv2t convnextv2_base.fcmae | crops 3 | batch 16
+ - swincrs swinv2_base_window16_256.ms_in1k | crops 3 | batch 12
+ - eva02b eva02_base_patch16_clip_224.merged2b | crops 3 | batch 12
+[cache] miss: dinov3b -> computing embeddings...
+[weights] loaded /kaggle/input/zoolib2-0/model.safetensors | missing=0 unexpected=0
+[cache] miss: cnxv2t -> computing embeddings...
+[weights] loaded /kaggle/input/zoolib2-0/convnextv2_base.model.safetensors | missing=0 unexpected=2
+[cache] miss: swincrs -> computing embeddings...
+[weights] loaded /kaggle/input/zoolib2-0/swinv2_base_window16_256.model.safetensors | missing=0 unexpected=4
+[cache] miss: eva02b -> computing embeddings...
+[weights] loaded /kaggle/input/zoolib2-0/eva02_base_patch16_clip_224.merged2b.model.safetensors | missing=0 unexpected=2
+
+=== Fold 1/3 ===
+[dinov3b] Fold RMSE:
+Dry_Green_g     15.750154
+Dry_Dead_g      11.154285
+Dry_Clover_g     8.392684
+GDM_g           16.705687
+Dry_Total_g     21.984442
+mean            14.797450
+all_concat      15.526224
+[cnxv2t] Fold RMSE:
+Dry_Green_g     18.204618
+Dry_Dead_g      12.199781
+Dry_Clover_g    11.360209
+GDM_g           19.218288
+Dry_Total_g     25.453009
+mean            17.287181
+all_concat      18.036049
+[swincrs] Fold RMSE:
+Dry_Green_g     18.819021
+Dry_Dead_g      11.875846
+Dry_Clover_g    11.208113
+GDM_g           19.842861
+Dry_Total_g     25.770685
+mean            17.503305
+all_concat      18.323103
+[eva02b] Fold RMSE:
+Dry_Green_g     16.485313
+Dry_Dead_g      11.585831
+Dry_Clover_g     8.499517
+GDM_g           17.528782
+Dry_Total_g     23.329052
+mean            15.485699
+all_concat      16.307922
+
+=== Fold 2/3 ===
+[dinov3b] Fold RMSE:
+Dry_Green_g     13.990731
+Dry_Dead_g       8.861301
+Dry_Clover_g     7.448013
+GDM_g           15.602956
+Dry_Total_g     17.289511
+mean            12.638502
+all_concat      13.206935
+[cnxv2t] Fold RMSE:
+Dry_Green_g     15.663868
+Dry_Dead_g      10.013577
+Dry_Clover_g    10.519907
+GDM_g           18.236950
+Dry_Total_g     20.303801
+mean            14.947620
+all_concat      15.499210
+[swincrs] Fold RMSE:
+Dry_Green_g     15.004530
+Dry_Dead_g       9.820827
+Dry_Clover_g     8.446624
+GDM_g           16.019468
+Dry_Total_g     18.678732
+mean            13.594036
+all_concat      14.131160
+[eva02b] Fold RMSE:
+Dry_Green_g     12.112362
+Dry_Dead_g       9.312295
+Dry_Clover_g     8.000329
+GDM_g           14.333563
+Dry_Total_g     16.100985
+mean            11.971907
+all_concat      12.346062
+
+=== Fold 3/3 ===
+[dinov3b] Fold RMSE:
+Dry_Green_g      9.874084
+Dry_Dead_g       9.086084
+Dry_Clover_g     4.302917
+GDM_g           10.496653
+Dry_Total_g     14.709949
+mean             9.693937
+all_concat      10.248238
+[cnxv2t] Fold RMSE:
+Dry_Green_g     14.813642
+Dry_Dead_g       9.501269
+Dry_Clover_g     5.600946
+GDM_g           14.673367
+Dry_Total_g     18.115162
+mean            12.540877
+all_concat      13.300793
+[swincrs] Fold RMSE:
+Dry_Green_g     15.110501
+Dry_Dead_g       8.786001
+Dry_Clover_g     4.722092
+GDM_g           15.266774
+Dry_Total_g     18.525953
+mean            12.482264
+all_concat      13.446966
+[eva02b] Fold RMSE:
+Dry_Green_g     12.705314
+Dry_Dead_g       9.350863
+Dry_Clover_g     5.202789
+GDM_g           12.954456
+Dry_Total_g     17.236469
+mean            11.489978
+all_concat      12.172482
+
+=== OOF RMSE per model (overall) ===
+[dinov3b]
+Dry_Green_g     13.432615
+Dry_Dead_g       9.755300
+Dry_Clover_g     6.938423
+GDM_g           14.522532
+Dry_Total_g     18.244867
+mean            12.578747
+all_concat      13.172106
+[cnxv2t]
+Dry_Green_g     16.291193
+Dry_Dead_g      10.636109
+Dry_Clover_g     9.506022
+GDM_g           17.485582
+Dry_Total_g     21.511694
+mean            15.086120
+all_concat      15.731451
+[swincrs]
+Dry_Green_g     16.407507
+Dry_Dead_g      10.241714
+Dry_Clover_g     8.549179
+GDM_g           17.160391
+Dry_Total_g     21.262129
+mean            14.724184
+all_concat      15.451502
+[eva02b]
+Dry_Green_g     13.903234
+Dry_Dead_g      10.138852
+Dry_Clover_g     7.378258
+GDM_g           15.061287
+Dry_Total_g     19.153610
+mean            13.127048
+all_concat      13.742185
+
+=== Fold-wise OOF STACK RMSE (NNLS weights fit excluding fold) ===
+
+Fold 1 STACK RMSE:
+Dry_Green_g     15.641976
+Dry_Dead_g      11.193484
+Dry_Clover_g     8.979984
+GDM_g           16.801296
+Dry_Total_g     22.429781
+mean            15.009304
+all_concat      15.722495
+
+Fold 2 STACK RMSE:
+Dry_Green_g     12.601659
+Dry_Dead_g       8.905129
+Dry_Clover_g     7.443355
+GDM_g           14.396652
+Dry_Total_g     16.298162
+mean            11.928992
+all_concat      12.380633
+
+Fold 3 STACK RMSE:
+Dry_Green_g     11.324996
+Dry_Dead_g       8.960361
+Dry_Clover_g     4.582224
+GDM_g           11.730700
+Dry_Total_g     15.802012
+mean            10.480059
+all_concat      11.107234
+
+OOF RMSE (STACK overall):
+Dry_Green_g     13.313261
+Dry_Dead_g       9.744802
+Dry_Clover_g     7.235109
+GDM_g           14.458636
+Dry_Total_g     18.424881
+mean            12.635338
+all_concat      13.214230
+
+=== Final stack weights per target (fit on all OOF) ===
+
+Target: Dry_Green_g
+  model   weight
+dinov3b 0.470318
+ eva02b 0.441263
+ cnxv2t 0.088419
+swincrs 0.000000
+
+Target: Dry_Dead_g
+  model   weight
+dinov3b 0.504823
+ eva02b 0.313288
+swincrs 0.171612
+ cnxv2t 0.010278
+
+Target: Dry_Clover_g
+  model   weight
+dinov3b 0.638438
+ eva02b 0.361562
+ cnxv2t 0.000000
+swincrs 0.000000
+
+Target: GDM_g
+  model   weight
+ eva02b 0.434685
+dinov3b 0.426214
+ cnxv2t 0.139101
+swincrs 0.000000
+
+Target: Dry_Total_g
+  model   weight
+dinov3b 0.478093
+ eva02b 0.425794
+ cnxv2t 0.096114
+swincrs 0.000000
