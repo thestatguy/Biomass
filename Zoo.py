@@ -1,11 +1,5 @@
 # model_zoo_v1_pycharm.py
 # 4 backbones -> multi-crop embeddings -> xgb per target -> oof stacking (nnls) -> submission.csv
-#
-# pycharm-friendly:
-# - uses argparse for local paths (data_dir, weights_dir, artifacts_dir, submission_path)
-# - no /kaggle/* hardcoding
-# - optional offline env toggles
-# - all variable names + function names are lowercase (including module-level “constants”)
 
 import argparse
 import gc
@@ -27,14 +21,14 @@ import xgboost as xgb
 from PIL import Image
 from scipy.optimize import nnls
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, GroupKFold
 
 
 # =========================
 # config (all lowercase)
 # =========================
 seed = 123
-n_folds = 5
+n_folds = 3
 
 targets = ["Dry_Green_g", "Dry_Dead_g", "Dry_Clover_g", "GDM_g", "Dry_Total_g"]
 n_targets = len(targets)
@@ -45,7 +39,7 @@ idx_clover = targets.index("Dry_Clover_g")
 idx_gdm = targets.index("GDM_g")
 idx_total = targets.index("Dry_Total_g")
 
-panorama_n_crops = 5
+panorama_n_crops = 3
 use_pls_on_emb = True
 pls_ncomp = 16
 
@@ -387,6 +381,153 @@ def get_all_embeddings(all_paths: List[str], img_root: str, cache_dir: str, cfg:
     save_emb_cache(cache_base, arr, all_paths, cfg)
     return arr
 
+def compute_rgb_features_for_image(img: Image.Image) -> np.ndarray:
+    arr = np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0
+    r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
+    eps = 1e-6
+
+    exg = 2 * g - r - b
+    gli = (2 * g - r - b) / (2 * g + r + b + eps)
+    vari = (g - r) / (g + r - b + eps)
+    ngrdi = (g - r) / (g + r + eps)
+
+    green_dom = ((g > r) & (g > b) & (g > 0.2)).mean()
+    brown_dom = ((r > g) & (r > b)).mean()
+
+    mean_rgb = arr.reshape(-1, 3).mean(axis=0)
+    std_rgb = arr.reshape(-1, 3).std(axis=0)
+
+    feats = np.array([
+        mean_rgb[0], mean_rgb[1], mean_rgb[2],
+        std_rgb[0], std_rgb[1], std_rgb[2],
+        exg.mean(), exg.std(),
+        gli.mean(), gli.std(),
+        vari.mean(), vari.std(),
+        ngrdi.mean(), ngrdi.std(),
+        green_dom, brown_dom,
+    ], dtype=np.float32)
+
+    return feats
+
+
+def compute_rgb_features(image_paths: List[str], img_root: str, n_crops: int) -> np.ndarray:
+    out = []
+    for p in image_paths:
+        ap = os.path.join(img_root, p)
+        with Image.open(ap) as im:
+            img = im.convert("RGB")
+
+        crops = panorama_square_crops(img, n_crops=n_crops)
+        crop_feats = [compute_rgb_features_for_image(c) for c in crops]
+        out.append(np.mean(np.stack(crop_feats, axis=0), axis=0))
+
+    return np.vstack(out).astype(np.float32)
+
+
+tab_cols = ["Sampling_Date", "State", "Species", "Pre_GSHH_NDVI", "Height_Ave_cm"]
+
+class tabular_featurizer:
+    def __init__(self, top_k_species: int = 96):
+        self.top_k_species = top_k_species
+        self.state_vocab = []
+        self.state_index = {}
+        self.species_vocab = []
+        self.species_index = {}
+        self.ndvi_median = 0.0
+        self.height_median = 0.0
+
+    def fit(self, meta_df: pd.DataFrame) -> "tabular_featurizer":
+        # numeric medians
+        ndvi = pd.to_numeric(meta_df.get("Pre_GSHH_NDVI", np.nan), errors="coerce")
+        hgt = pd.to_numeric(meta_df.get("Height_Ave_cm", np.nan), errors="coerce")
+        self.ndvi_median = float(np.nanmedian(ndvi)) if np.isfinite(np.nanmedian(ndvi)) else 0.0
+        self.height_median = float(np.nanmedian(hgt)) if np.isfinite(np.nanmedian(hgt)) else 0.0
+
+        # state one-hot vocab
+        states = meta_df.get("State", pd.Series(["UNK"] * len(meta_df))).fillna("UNK").astype(str)
+        self.state_vocab = sorted(states.unique().tolist())
+        self.state_index = {s: i for i, s in enumerate(self.state_vocab)}
+
+        # species top-k tokens (multi-hot)
+        counts = {}
+        species = meta_df.get("Species", pd.Series([""] * len(meta_df))).fillna("").astype(str)
+        for s in species:
+            for tok in [t for t in s.split("_") if t]:
+                counts[tok] = counts.get(tok, 0) + 1
+        self.species_vocab = [k for k, _ in sorted(counts.items(), key=lambda kv: -kv[1])[: self.top_k_species]]
+        self.species_index = {t: i for i, t in enumerate(self.species_vocab)}
+        return self
+
+    def transform(self, meta_df: pd.DataFrame) -> np.ndarray:
+        n = len(meta_df)
+        eps = 1e-6
+
+        # numeric
+        ndvi = pd.to_numeric(meta_df.get("Pre_GSHH_NDVI", np.nan), errors="coerce").to_numpy(np.float32)
+        hgt = pd.to_numeric(meta_df.get("Height_Ave_cm", np.nan), errors="coerce").to_numpy(np.float32)
+        ndvi = np.where(np.isfinite(ndvi), ndvi, self.ndvi_median).reshape(n, 1)
+        hgt = np.where(np.isfinite(hgt), hgt, self.height_median).reshape(n, 1)
+
+        # date -> year, month, dayofyear + sin/cos
+        dt = pd.to_datetime(meta_df.get("Sampling_Date", pd.Series([None] * n)), errors="coerce")
+        year = dt.dt.year.fillna(0).astype(np.float32).to_numpy().reshape(n, 1)
+        month = dt.dt.month.fillna(0).astype(np.float32).to_numpy().reshape(n, 1)
+        doy = dt.dt.dayofyear.fillna(0).astype(np.float32).to_numpy().reshape(n, 1)
+        doy_sin = np.sin(2 * np.pi * doy / 366.0).astype(np.float32)
+        doy_cos = np.cos(2 * np.pi * doy / 366.0).astype(np.float32)
+
+        # state one-hot
+        state_oh = np.zeros((n, len(self.state_vocab)), dtype=np.float32)
+        states = meta_df.get("State", pd.Series(["UNK"] * n)).fillna("UNK").astype(str).to_numpy()
+        for i, s in enumerate(states):
+            j = self.state_index.get(s)
+            if j is not None:
+                state_oh[i, j] = 1.0
+
+        # species multi-hot
+        sp_oh = np.zeros((n, len(self.species_vocab)), dtype=np.float32)
+        species = meta_df.get("Species", pd.Series([""] * n)).fillna("").astype(str).to_numpy()
+        for i, s in enumerate(species):
+            for tok in [t for t in s.split("_") if t]:
+                j = self.species_index.get(tok)
+                if j is not None:
+                    sp_oh[i, j] = 1.0
+
+        return np.concatenate([ndvi, hgt, year, month, doy, doy_sin, doy_cos, state_oh, sp_oh], axis=1).astype(np.float32)
+
+def make_teacher_oof(
+    train_meta: pd.DataFrame,
+    y_log: np.ndarray,
+    groups: Optional[np.ndarray],
+    n_splits: int,
+    xgb_params: dict,
+    seed_value: int,
+) -> np.ndarray:
+    splitter = GroupKFold(n_splits=n_splits) if groups is not None else KFold(n_splits=n_splits, shuffle=True, random_state=seed_value)
+    oof = np.zeros_like(y_log, dtype=np.float32)
+
+    for fold, (idx_tr, idx_va) in enumerate(splitter.split(train_meta, groups=groups), 1):
+        fe = tabular_featurizer(top_k_species=96).fit(train_meta.iloc[idx_tr])
+        xtr = fe.transform(train_meta.iloc[idx_tr])
+        xva = fe.transform(train_meta.iloc[idx_va])
+
+        for j in range(y_log.shape[1]):
+            m = fit_xgb_one(
+                x_tr=xtr,
+                y_tr=y_log[idx_tr, j],
+                x_va=xva,
+                y_va=y_log[idx_va, j],
+                xgb_params=xgb_params,
+                seed_value=seed_value + 1000 * fold + j,
+                w_tr=None,
+            )
+            d = xgb.DMatrix(xva)
+            oof[idx_va, j] = m.predict(d, iteration_range=(0, m.best_iteration + 1))
+
+    return oof
+
+
+
 
 # =========================
 # xgb
@@ -398,8 +539,12 @@ def fit_xgb_one(
     y_va: np.ndarray,
     xgb_params: dict,
     seed_value: int,
+    w_tr: Optional[np.ndarray] = None,
 ) -> xgb.Booster:
-    dtr = xgb.DMatrix(x_tr, label=y_tr)
+    if w_tr is not None:
+        dtr = xgb.DMatrix(x_tr, label=y_tr, weight=w_tr)
+    else:
+        dtr = xgb.DMatrix(x_tr, label=y_tr)
     dva = xgb.DMatrix(x_va, label=y_va)
 
     params = dict(xgb_params)
@@ -509,11 +654,62 @@ def main(
     os.makedirs(artifacts_dir, exist_ok=True)
 
     train_wide = read_train_image_level(train_csv).sort_values("image_path").reset_index(drop=True)
+    train_images = train_wide["image_path"].tolist()
+
+    # drop bad rows once, early
+    y = train_wide[targets].to_numpy(dtype=np.float32)
+    bad = ~np.isfinite(y).all(axis=1)
+    if bad.any():
+        print(f"[warn] dropping {bad.sum()} rows with nan/inf targets")
+        train_wide = train_wide.loc[~bad].reset_index(drop=True)
+        train_images = train_wide["image_path"].tolist()
+        y = train_wide[targets].to_numpy(dtype=np.float32)
+
+    y_clip = np.clip(y, 0.0, None)
+    y_log = np.log1p(y_clip)
+
+    # build xgb params ONCE (teacher + student share this)
+    xgb_params = {
+        "objective": "reg:squarederror",
+        "eval_metric": "rmse",
+        "eta": 0.03,
+        "max_depth": 8,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "min_child_weight": 5,
+        "nthread": int(max(1, nthread)),
+        "seed": int(seed),
+        "tree_method": "hist",
+        "max_bin": 256,
+    }
+
+    # read test
     test_long, test_images = read_test_images(test_csv)
     test_images = sorted(test_images)
 
-    train_images = train_wide["image_path"].tolist()
+    # meta/groups aligned to filtered train_images
+    train_df_raw = pd.read_csv(train_csv)
+    train_meta = (
+        train_df_raw[["image_path"] + tab_cols]
+        .drop_duplicates("image_path")
+        .set_index("image_path")
+        .reindex(train_images)
+        .reset_index()
+    )
 
+    groups = (
+            train_meta["Sampling_Date"].astype(str).fillna("na") + "_" +
+            train_meta["State"].astype(str).fillna("na")
+    ).to_numpy()
+
+    teacher_oof_log = make_teacher_oof(
+        train_meta=train_meta,
+        y_log=y_log,
+        groups=groups,
+        n_splits=n_folds,
+        xgb_params=xgb_params,
+        seed_value=seed,
+    )
     y = train_wide[targets].to_numpy(dtype=np.float32)
     if not np.isfinite(y).all():
         bad = ~np.isfinite(y).all(axis=1)
@@ -554,6 +750,9 @@ def main(
 
     # embeddings for all images (train + test)
     all_images = train_images + test_images
+    rgb_all = compute_rgb_features(all_images, img_root=data_dir, n_crops=panorama_n_crops)
+    rgb_tr = rgb_all[:len(train_images)]
+    rgb_te = rgb_all[len(train_images):]
     emb_tr: Dict[str, np.ndarray] = {}
     emb_te: Dict[str, np.ndarray] = {}
 
@@ -565,19 +764,58 @@ def main(
         gc.collect()
 
     # cv
-    kf = KFold(n_splits=n_folds, shuffle=True, random_state=seed)
-
     oof_pred: Dict[str, np.ndarray] = {cfg.key: np.zeros((len(train_images), n_targets), np.float32) for cfg in model_zoo}
     te_sum: Dict[str, np.ndarray] = {cfg.key: np.zeros((len(test_images), n_targets), np.float32) for cfg in model_zoo}
     fold_id = np.full(len(train_images), -1, dtype=np.int32)
 
-    for fold_idx, (idx_tr, idx_va) in enumerate(kf.split(train_images), 1):
+    if groups is not None:
+        n_groups = len(np.unique(groups))
+        if n_groups < n_folds:
+            print(f"[warn] only {n_groups} unique groups < n_folds={n_folds}. falling back to kfold.")
+            groups = None
+
+    if groups is not None:
+        split_iter = GroupKFold(n_splits=n_folds).split(train_meta, groups=groups)
+
+    else:
+        splitter = KFold(n_splits=n_folds, shuffle=True, random_state=seed)
+        split_iter = splitter.split(train_images)
+
+    for fold_idx, (idx_tr, idx_va) in enumerate(split_iter, 1):
         print(f"\n=== fold {fold_idx}/{n_folds} ===")
         fold_id[idx_va] = fold_idx
 
         ytr_log = y_log[idx_tr]
         yva_log = y_log[idx_va]
         true_va = y_clip[idx_va]
+
+        # ---------------------------------------------------------
+        # leak-free teacher oof on TRAIN FOLD ONLY (idx_tr)
+        # ---------------------------------------------------------
+        if groups is not None:
+            groups_tr = groups[idx_tr]
+            n_groups_tr = len(np.unique(groups_tr))
+            # keep n_splits valid
+            teacher_splits = min(3, n_groups_tr)  # or min(n_folds, n_groups_tr)
+            if teacher_splits < 2:
+                # fallback if train fold has too few groups
+                teacher_groups = None
+                teacher_splits = 3
+            else:
+                teacher_groups = groups_tr
+        else:
+            teacher_groups = None
+            teacher_splits = 3
+
+        teacher_tr_oof_log = make_teacher_oof(
+            train_meta=train_meta.iloc[idx_tr].reset_index(drop=True),
+            y_log=y_log[idx_tr],
+            groups=teacher_groups,
+            n_splits=teacher_splits,
+            xgb_params=xgb_params,
+            seed_value=seed + 10_000 * fold_idx,
+        )
+        # teacher_tr_oof_log shape: (len(idx_tr), n_targets)
 
         for cfg in model_zoo:
             xtr_emb = emb_tr[cfg.key][idx_tr]
@@ -595,8 +833,21 @@ def main(
             else:
                 xtr, xva, xte = xtr_emb, xva_emb, xte_emb
 
-            models: List[xgb.Booster] = []
+            # always append rgb
+            xtr = np.concatenate([xtr, rgb_tr[idx_tr]], axis=1)
+            xva = np.concatenate([xva, rgb_tr[idx_va]], axis=1)
+            xte = np.concatenate([xte, rgb_te], axis=1)
+
+            models = []
             for j in range(n_targets):
+                # teacher-based sample weights (train only) -- leak-free
+                err = np.abs(ytr_log[:, j] - teacher_tr_oof_log[:, j])
+                w_tr = 1.0 / (1.0 + err)
+
+                # (recommended) stabilize weights
+                w_tr = np.clip(w_tr, 0.25, 4.0)
+                w_tr = w_tr / np.mean(w_tr)
+
                 m = fit_xgb_one(
                     x_tr=xtr,
                     y_tr=ytr_log[:, j],
@@ -604,6 +855,7 @@ def main(
                     y_va=yva_log[:, j],
                     xgb_params=xgb_params,
                     seed_value=seed + 1000 * fold_idx + j,
+                    w_tr=w_tr,
                 )
                 models.append(m)
 
