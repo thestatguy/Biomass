@@ -222,3 +222,72 @@ dinov3b 0.466026
  eva02b 0.396274
 swincrs 0.137700
  cnxv2t 0.000000
+
+
+
+Data dir: /kaggle/input/csiro-biomass
+Artifacts dir: /kaggle/working/artifacts_py
+Submission path: /kaggle/working/submission.csv
+DINO model: vit_base_patch16_dinov3.lvd1689m | crops: 5 | batch: 16
+Train images: 357 | Test images: 1
+[weights] loaded from /kaggle/input/dinov3/model.safetensors
+[weights] missing keys: 0 | unexpected keys: 0
+
+=== Fold 1/5 ===
+Fold RMSE (XGB):
+Dry_Green_g     13.417171
+Dry_Dead_g      10.069072
+Dry_Clover_g     7.676094
+GDM_g           14.048565
+Dry_Total_g     17.944366
+mean            12.631054
+all_concat      13.112526
+
+=== Fold 2/5 ===
+Fold RMSE (XGB):
+Dry_Green_g     15.678034
+Dry_Dead_g      10.947521
+Dry_Clover_g     7.163801
+GDM_g           16.347387
+Dry_Total_g     20.863764
+mean            14.200101
+all_concat      14.963307
+
+=== Fold 3/5 ===
+Fold RMSE (XGB):
+Dry_Green_g     14.139271
+Dry_Dead_g       8.329887
+Dry_Clover_g     6.822218
+GDM_g           14.913888
+Dry_Total_g     16.736702
+mean            12.188393
+all_concat      12.793670
+
+=== Fold 4/5 ===
+Fold RMSE (XGB):
+Dry_Green_g      7.769107
+Dry_Dead_g       8.052157
+Dry_Clover_g     6.302611
+GDM_g            9.762847
+Dry_Total_g     12.860887
+mean             8.949522
+all_concat       9.226427
+
+=== Fold 5/5 ===
+Fold RMSE (XGB):
+Dry_Green_g      9.837275
+Dry_Dead_g       9.383697
+Dry_Clover_g     3.530175
+GDM_g           10.227274
+Dry_Total_g     15.433254
+mean             9.682335
+all_concat      10.392982
+
+OOF RMSE (XGB overall):
+Dry_Green_g     12.525568
+Dry_Dead_g       9.424716
+Dry_Clover_g     6.470602
+GDM_g           13.330205
+Dry_Total_g     16.991383
+mean            11.748495
+all_concat      12.279945
